@@ -27,8 +27,19 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
 	"go.starlark.net/starlark"
+	"google.golang.org/protobuf/types/descriptorpb"
 	yaml "gopkg.in/yaml.v2"
 )
+
+// UNSTABLE extension point for describing a message
+type ProtoMessageType interface {
+	// Descriptors returns the file and message descriptor messages
+	// for the given message
+	Descriptors() (*descriptorpb.FileDescriptorProto, *descriptorpb.DescriptorProto)
+
+	// Empty returns an empty message with a descriptor
+	Empty() proto.Message
+}
 
 // UNSTABLE extension point for configuring how protobuf messages are loaded.
 //
@@ -36,7 +47,7 @@ import (
 type ProtoRegistry interface {
 	// UNSTABLE lookup from full protobuf message name to a Go type of the
 	// generated message struct.
-	UnstableProtoMessageType(name string) (reflect.Type, error)
+	UnstableProtoMessageType(name string) (ProtoMessageType, error)
 
 	// UNSTABLE lookup from go-protobuf enum name to the name->value map.
 	UnstableEnumValueMap(name string) map[string]int32

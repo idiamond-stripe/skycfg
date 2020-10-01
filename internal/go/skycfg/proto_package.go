@@ -20,14 +20,54 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/golang/protobuf/descriptor"
 	"github.com/golang/protobuf/proto"
 	"go.starlark.net/starlark"
+	"google.golang.org/protobuf/types/descriptorpb"
 )
 
 type defaultProtoRegistry struct{}
 
-func (*defaultProtoRegistry) UnstableProtoMessageType(name string) (reflect.Type, error) {
-	return proto.MessageType(name), nil
+type defaultProtoMessageType struct {
+	fileDesc *descriptorpb.FileDescriptorProto
+	msgDesc  *descriptorpb.DescriptorProto
+	emptyMsg descriptor.Message
+}
+
+func (d *defaultProtoMessageType) Descriptors() (*descriptorpb.FileDescriptorProto, *descriptorpb.DescriptorProto) {
+	return d.fileDesc, d.msgDesc
+}
+
+func (d *defaultProtoMessageType) Empty() proto.Message {
+	return d.emptyMsg
+}
+
+func (*defaultProtoRegistry) UnstableProtoMessageType(name string) (ProtoMessageType, error) {
+	goType := proto.MessageType(name)
+	if goType == nil {
+		return nil, fmt.Errorf("Protobuf message type %q not found", name)
+	}
+
+	var emptyMsg descriptor.Message
+	if goType.Kind() == reflect.Ptr {
+		goValue := reflect.New(goType.Elem()).Interface()
+		if iface, ok := goValue.(descriptor.Message); ok {
+			emptyMsg = iface
+		}
+	}
+	if emptyMsg == nil {
+		// Return a slightly useful error in case some clever person has
+		// manually registered a `proto.Message` that doesn't use pointer
+		// receivers.
+		return nil, fmt.Errorf("InternalError: %v is not a generated proto.Message", goType)
+	}
+	fileDesc, msgDesc := descriptor.ForMessage(emptyMsg)
+
+	return &defaultProtoMessageType{
+		fileDesc: fileDesc,
+		msgDesc:  msgDesc,
+		emptyMsg: emptyMsg,
+	}, nil
 }
 
 func (*defaultProtoRegistry) UnstableEnumValueMap(name string) map[string]int32 {

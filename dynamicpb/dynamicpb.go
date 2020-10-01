@@ -14,33 +14,36 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-// Package gogocompat is a compatibility shim for GoGo.
-package gogocompat
+// Package dynamicpb is a compatibility shim that allows reading
+// dynamicpb messages.
+package dynamicpb
 
 import (
 	"fmt"
-	"reflect"
-	"strings"
 
-	gogo_proto "github.com/gogo/protobuf/proto"
-	"github.com/golang/protobuf/descriptor"
-	"github.com/golang/protobuf/proto"
+	golang_proto "github.com/golang/protobuf/proto"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protodesc"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
+	"google.golang.org/protobuf/runtime/protoiface"
 	"google.golang.org/protobuf/types/descriptorpb"
+	"google.golang.org/protobuf/types/dynamicpb"
 
 	impl "github.com/stripe/skycfg/internal/go/skycfg"
 )
 
-type gogoProtoMessageType struct {
+type dynamicProtoMessageType struct {
 	fileDesc *descriptorpb.FileDescriptorProto
 	msgDesc  *descriptorpb.DescriptorProto
-	emptyMsg descriptor.Message
+	emptyMsg protoiface.MessageV1
 }
 
-func (d *gogoProtoMessageType) Descriptors() (*descriptorpb.FileDescriptorProto, *descriptorpb.DescriptorProto) {
+func (d *dynamicProtoMessageType) Descriptors() (*descriptorpb.FileDescriptorProto, *descriptorpb.DescriptorProto) {
 	return d.fileDesc, d.msgDesc
 }
 
-func (d *gogoProtoMessageType) Empty() proto.Message {
+func (d *dynamicProtoMessageType) Empty() protoiface.MessageV1 {
 	return d.emptyMsg
 }
 
@@ -48,49 +51,29 @@ type unstableProtoRegistry interface {
 	impl.ProtoRegistry
 }
 
-type protoRegistry struct{}
+type protoRegistry struct {
+	files *protoregistry.Files
+}
 
-func (*protoRegistry) UnstableProtoMessageType(name string) (impl.ProtoMessageType, error) {
-	if t := proto.MessageType(name); t != nil {
-		return nil, nil
+func (r *protoRegistry) UnstableProtoMessageType(name string) (impl.ProtoMessageType, error) {
+	descriptor, err := r.files.FindDescriptorByName(protoreflect.FullName(name))
+	d, ok := descriptor.(protoreflect.MessageDescriptor)
+	if !ok {
+		return nil, fmt.Errorf("not a message: %#v", descriptor)
 	}
-	name = strings.TrimPrefix(name, "gogo:")
-	goType := gogo_proto.MessageType(name)
-
-	if goType == nil {
-		return nil, fmt.Errorf("Protobuf message type %q not found", name)
+	if err != nil {
+		return nil, err
 	}
-
-	var emptyMsg descriptor.Message
-	if goType.Kind() == reflect.Ptr {
-		goValue := reflect.New(goType.Elem()).Interface()
-		if iface, ok := goValue.(descriptor.Message); ok {
-			emptyMsg = iface
-		}
-	}
-	if emptyMsg == nil {
-		// Return a slightly useful error in case some clever person has
-		// manually registered a `proto.Message` that doesn't use pointer
-		// receivers.
-		return nil, fmt.Errorf("InternalError: %v is not a generated proto.Message", goType)
-	}
-	fileDesc, msgDesc := descriptor.ForMessage(emptyMsg)
-
-	return &gogoProtoMessageType{
-		fileDesc: fileDesc,
-		msgDesc:  msgDesc,
-		emptyMsg: emptyMsg,
+	t := dynamicpb.NewMessageType(d)
+	return &dynamicProtoMessageType{
+		fileDesc: protodesc.ToFileDescriptorProto(t.Descriptor().ParentFile()),
+		msgDesc:  protodesc.ToDescriptorProto(t.Descriptor()),
+		emptyMsg: golang_proto.MessageV1(proto.Message(t.New().Interface())),
 	}, nil
 }
 
 func (*protoRegistry) UnstableEnumValueMap(name string) map[string]int32 {
-	if ev := proto.EnumValueMap(name); ev != nil {
-		return ev
-	}
-	if ev := gogo_proto.EnumValueMap(name); ev != nil {
-		return ev
-	}
-	return nil
+	return map[string]int32{}
 }
 
 // ProtoRegistry returns a Protobuf message registry that falls back to GoGo.
@@ -105,6 +88,15 @@ func (*protoRegistry) UnstableEnumValueMap(name string) map[string]int32 {
 //
 // The exact type of the return value is not yet stabilized, but the result
 // is guaranteed to be accepted by the skycfg.WithProtoRegistry() load option.
-func ProtoRegistry() unstableProtoRegistry {
-	return &protoRegistry{}
+func ProtoRegistry(fd *descriptorpb.FileDescriptorSet) (unstableProtoRegistry, error) {
+	files, err := protodesc.NewFiles(fd)
+	if err != nil {
+		return nil, err
+	}
+
+	registry := &protoRegistry{
+		files: files,
+	}
+
+	return registry, nil
 }

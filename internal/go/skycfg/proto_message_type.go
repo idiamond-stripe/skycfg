@@ -18,10 +18,8 @@ package skycfg
 
 import (
 	"fmt"
-	"reflect"
 	"strings"
 
-	"github.com/golang/protobuf/descriptor"
 	"github.com/golang/protobuf/proto"
 	descriptor_pb "github.com/golang/protobuf/protoc-gen-go/descriptor"
 	"go.starlark.net/starlark"
@@ -32,34 +30,19 @@ import (
 // The message type must have been registered with the protobuf library, and implement
 // the expected interfaces for a generated .pb.go message struct.
 func newMessageType(registry ProtoRegistry, nestedMsgName, name string) (starlark.Value, error) {
-	goType, err := registry.UnstableProtoMessageType(name)
+	pmt, err := registry.UnstableProtoMessageType(name)
 	if err != nil {
 		return nil, err
 	}
-	if goType == nil {
-		return nil, fmt.Errorf("Protobuf message type %q not found", name)
-	}
 
-	var emptyMsg descriptor.Message
-	if goType.Kind() == reflect.Ptr {
-		goValue := reflect.New(goType.Elem()).Interface()
-		if iface, ok := goValue.(descriptor.Message); ok {
-			emptyMsg = iface
-		}
-	}
-	if emptyMsg == nil {
-		// Return a slightly useful error in case some clever person has
-		// manually registered a `proto.Message` that doesn't use pointer
-		// receivers.
-		return nil, fmt.Errorf("InternalError: %v is not a generated proto.Message", goType)
-	}
-	fileDesc, msgDesc := descriptor.ForMessage(emptyMsg)
+	fileDesc, msgDesc := pmt.Descriptors()
+
 	mt := &skyProtoMessageType{
 		registry:      registry,
 		fileDesc:      fileDesc,
 		msgDesc:       msgDesc,
 		nestedMsgName: nestedMsgName,
-		emptyMsg:      emptyMsg,
+		emptyMsg:      pmt.Empty(),
 	}
 	if gotName := mt.Name(); strings.TrimPrefix(name, "gogo:") != gotName {
 		// All the protobuf lookups are by name, so it's important that
@@ -67,7 +50,7 @@ func newMessageType(registry ProtoRegistry, nestedMsgName, name string) (starlar
 		//
 		// Special casing the "gogo:" prefix is unfortunate, but lets
 		// the GoGo compatibility layer support built-in types.
-		return nil, fmt.Errorf("InternalError: %v has unexpected protobuf type name %q (wanted %q)", goType, gotName, name)
+		return nil, fmt.Errorf("InternalError: %v has unexpected protobuf type name %q (wanted %q)", pmt, gotName, name)
 	}
 	return mt, nil
 
