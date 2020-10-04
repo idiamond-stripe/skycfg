@@ -20,6 +20,7 @@ package dynamicpb
 
 import (
 	"fmt"
+	"log"
 
 	golang_proto "github.com/golang/protobuf/proto"
 	"google.golang.org/protobuf/proto"
@@ -56,6 +57,7 @@ type protoRegistry struct {
 }
 
 func (r *protoRegistry) UnstableProtoMessageType(name string) (impl.ProtoMessageType, error) {
+	log.Printf("looking up msg: %+v", name)
 	descriptor, err := r.files.FindDescriptorByName(protoreflect.FullName(name))
 	d, ok := descriptor.(protoreflect.MessageDescriptor)
 	if !ok {
@@ -73,7 +75,8 @@ func (r *protoRegistry) UnstableProtoMessageType(name string) (impl.ProtoMessage
 }
 
 func (*protoRegistry) UnstableEnumValueMap(name string) map[string]int32 {
-	return map[string]int32{}
+	log.Printf("looking up enum: %+v", name)
+	return nil
 }
 
 // ProtoRegistry returns a Protobuf message registry that falls back to GoGo.

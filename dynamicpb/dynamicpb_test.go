@@ -21,21 +21,27 @@ package dynamicpb
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/golang/protobuf/descriptor"
 	golang_proto "github.com/golang/protobuf/proto"
+	"github.com/stripe/skycfg"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/descriptorpb"
 
 	_ "google.golang.org/protobuf/types/dynamicpb"
 )
 
-const descriptorFile = "testdata/descriptor_set.bin"
+const (
+	descriptorFile = "testdata/descriptor_set.bin"
+	configFile     = "testdata/config.cfg"
+)
 
 // Copied from internal/go/skycfg/proto_util.go
 func mustParseFileDescriptor(gzBytes []byte) *descriptorpb.FileDescriptorProto {
@@ -86,7 +92,7 @@ func messageTypeName(msg golang_proto.Message) string {
 	return strings.Join(chunks, ".")
 }
 
-func TestRegistry(t *testing.T) {
+func registry(t *testing.T) unstableProtoRegistry {
 	var fileDescriptorSet descriptorpb.FileDescriptorSet
 	file, err := os.Open(descriptorFile)
 	if err != nil {
@@ -107,6 +113,12 @@ func TestRegistry(t *testing.T) {
 		t.Fatalf("could not create registry: %+v", err)
 	}
 
+	return registry
+}
+
+func TestRegistry(t *testing.T) {
+	registry := registry(t)
+
 	mt, err := registry.UnstableProtoMessageType("testdata.AddressBook")
 	if err != nil {
 		t.Fatalf("could not find proto: %+v", err)
@@ -116,4 +128,19 @@ func TestRegistry(t *testing.T) {
 	if name != "testdata.AddressBook" {
 		t.Fatalf("unexpected name: %+v", name)
 	}
+}
+
+func TestIntegration(t *testing.T) {
+	registry := registry(t)
+
+	config, err := skycfg.Load(context.Background(), configFile, skycfg.WithProtoRegistry(registry))
+	if err != nil {
+		t.Fatalf("could not load config: %+v", err)
+	}
+	protos, err := config.Main(context.Background())
+	if err != nil {
+		t.Fatalf("error evaluating %q: %v\n", config.Filename(), err)
+		os.Exit(1)
+	}
+	log.Printf("%+v", protos)
 }

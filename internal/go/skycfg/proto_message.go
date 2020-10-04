@@ -32,6 +32,8 @@ import (
 	"github.com/golang/protobuf/ptypes/wrappers"
 	"go.starlark.net/starlark"
 	"go.starlark.net/syntax"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/dynamicpb"
 )
 
 // A Starlark built-in type representing a Protobuf message. Provides attributes
@@ -113,18 +115,24 @@ func NewSkyProtoMessage(msg proto.Message) *skyProtoMessage {
 		oneofs:    make(map[string]*proto.OneofProperties),
 		attrCache: make(map[string]starlark.Value),
 	}
-
 	protoProps := protoGetProperties(wrapper.val.Type())
-	for _, prop := range protoProps.Prop {
-		if prop.Tag == 0 {
-			// Skip attributes that don't correspond to a protobuf field.
-			continue
+	if wrapper.val.Type() == reflect.ValueOf(dynamicpb.Message{}).Type() {
+		dynMsg := msg.(*dynamicpb.Message)
+		dynMsg.Range(func(protoreflect.FieldDescriptor, protoreflect.Value) bool {
+			return true
+		})
+	} else {
+		for _, prop := range protoProps.Prop {
+			if prop.Tag == 0 {
+				// Skip attributes that don't correspond to a protobuf field.
+				continue
+			}
+			wrapper.fields = append(wrapper.fields, prop)
 		}
-		wrapper.fields = append(wrapper.fields, prop)
-	}
-	for fieldName, prop := range protoProps.OneofTypes {
-		wrapper.fields = append(wrapper.fields, prop.Prop)
-		wrapper.oneofs[fieldName] = prop
+		for fieldName, prop := range protoProps.OneofTypes {
+			wrapper.fields = append(wrapper.fields, prop.Prop)
+			wrapper.oneofs[fieldName] = prop
+		}
 	}
 	return wrapper
 }
